@@ -1,0 +1,233 @@
+import { Server } from 'socket.io';
+import inMemoryGameStates from '../__mocks__/in_game_memory';
+import { BotPlayer } from '../botManager';
+import { proposeTrade } from '../gameActions';
+import { addBot, createGame, loadGameState, saveGameState } from '../gameState';
+import { PlayerState, Trade } from '../types';
+
+jest.mock('uuid');
+jest.mock("../redis");
+
+
+
+describe('Bot Trading Logic', () => {
+  let gameId: string;
+  let io: Server;
+    let bot1:PlayerState;
+    let bot2:PlayerState;
+    let botPlayer1: BotPlayer;
+    let botPlayer2: BotPlayer;
+ 
+
+  beforeEach(async() => {
+      inMemoryGameStates.clear();
+    
+     io = new Server();
+   
+     let st= await createGame({});
+     gameId=st.gameId
+   
+     await addBot(gameId, io); // bot gets mock-id-2
+   await addBot(gameId, io)
+
+
+     const state=await loadGameState(gameId)
+
+
+    bot1=Object.values(state!.players)[0]
+    bot2=Object.values(state!.players)[1]
+
+    botPlayer1 = new BotPlayer(bot1.id, gameId, io);
+    botPlayer2 = new BotPlayer(bot2.id, gameId, io);
+
+    jest.spyOn(Math, 'random').mockReturnValue(0.1);
+  });
+
+  afterEach(() => {
+    jest.spyOn(Math, 'random').mockRestore();
+  });
+
+  test('bot proposes a trade to complete a monopoly', async () => {
+    let state = await loadGameState(gameId);
+    // Give bot1 two of the three properties in a group
+    state!.players[bot1.id].properties = [2, 3];
+    state!.propertyStates[2] = { owner: bot1.id, level: 0, mortgaged: false };
+    state!.propertyStates[3] = { owner: bot1.id, level: 0, mortgaged: false };
+    // Give bot2 the third property in the group
+    state!.players[bot2.id].properties = [5];
+    state!.propertyStates[5] = { owner: bot2.id, level: 0, mortgaged: false };
+    await saveGameState(gameId, state!);
+
+    const result = await botPlayer1.proposeTrade(state!);
+
+
+    expect(result).toBeDefined();
+  
+    expect(result!.trade.proposerId).toBe(bot1.id);
+    expect(result!.trade.responderId).toBe(bot2.id);
+    expect(result!.trade.request!.properties).toContain(5);
+  });
+
+  test('bot accepts a trade that gives it a monopoly', async () => {
+    let state = await loadGameState(gameId);
+    // Give bot2 two of the three properties in a group
+    state!.players[bot2.id].properties = [2, 3];
+    state!.propertyStates[2] = { owner: bot2.id, level: 0, mortgaged: false };
+    state!.propertyStates[3] = { owner: bot2.id, level: 0, mortgaged: false };
+    // Give bot1 the third property in the group
+    state!.players[bot1.id].properties = [5];
+    state!.propertyStates[5] = { owner: bot1.id, level: 0, mortgaged: false };
+    await saveGameState(gameId, state!);
+
+    const trade: Partial<Trade> = {
+        gameId,
+        proposerId: bot1.id,
+        responderId: bot2.id,
+        offer: { properties: [5] },
+        request: { properties: [2] },
+    };
+
+    await proposeTrade(trade);
+    await botPlayer2.handleGameEvent({ type: 'TRADE_OFFER', trade }, state!);
+
+    const updatedState = await loadGameState(gameId);
+    expect(updatedState!.players[bot2.id].properties).toContain(5);
+    expect(updatedState!.players[bot1.id].properties).not.toContain(5);
+  });
+
+  test('bot declines a trade that is not beneficial', async () => {
+    let state = await loadGameState(gameId);
+    state!.players[bot1.id].properties = [2];
+    state!.propertyStates[2] = { owner: bot1.id, level: 0, mortgaged: false };
+    state!.players[bot2.id].properties = [5];
+    state!.propertyStates[5] = { owner: bot2.id, level: 0, mortgaged: false };
+    await saveGameState(gameId, state!);
+
+    const trade: Partial<Trade> = {
+        gameId,
+        proposerId: bot1.id,
+        responderId: bot2.id,
+        offer: { properties: [2] },
+        request: { properties: [5], money: 10000 }, // Requesting too much
+    };
+
+    await proposeTrade(trade);
+    await botPlayer2.handleGameEvent({ type: 'TRADE_OFFER', trade }, state!);
+
+    const updatedState = await loadGameState(gameId);
+    expect(updatedState!.players[bot2.id].properties).toContain(5);
+    expect(updatedState!.players[bot1.id].properties).toContain(2);
+  });
+
+  test('bot proposes a trade with money', async () => {
+    let state = await loadGameState(gameId);
+    state!.players[bot1.id].properties = [2];
+    state!.propertyStates[2] = { owner: bot1.id, level: 0, mortgaged: false };
+    state!.players[bot2.id].properties = [5];
+    state!.propertyStates[5] = { owner: bot2.id, level: 0, mortgaged: false };
+    await saveGameState(gameId, state!);
+
+    const result =await botPlayer1.proposeTrade(state!);
+    expect(result?.trade).toBeDefined()
+
+  
+    expect(result!.trade.proposerId).toBe(bot1.id);
+    expect(result!.trade.responderId).toBe(bot2.id);
+    expect(result!.trade.request!.properties).toContain(5);
+    expect(result!.trade.offer!.money).toBeGreaterThan(0);
+  });
+
+  test('bot proposes a trade with a Get Out of Jail Free card', async () => {
+    let state = await loadGameState(gameId);
+    state!.players[bot1.id].properties = [2];
+    state!.propertyStates[2] = { owner: bot1.id, level: 0, mortgaged: false };
+    state!.players[bot1.id].getOutOfJailFreeCards = 1;
+    state!.players[bot2.id].properties = [5];
+    state!.propertyStates[5] = { owner: bot2.id, level: 0, mortgaged: false };
+    await saveGameState(gameId, state!);
+
+    const result =await botPlayer1.proposeTrade(state!);
+    expect(result?.trade).toBeDefined()
+  
+    expect(result!.trade.proposerId).toBe(bot1.id);
+    expect(result!.trade.responderId).toBe(bot2.id);
+    expect(result!.trade.request!.properties).toContain(5);
+    expect(result!.trade.offer!.getOutOfJailFreeCards).toBe(1);
+  });
+
+  test('bot rejects a trade that would break its monopoly', async () => {
+    let state = await loadGameState(gameId);
+    // Give bot2 a monopoly on the EAST group
+    state!.players[bot2.id].properties = [2, 3, 5];
+    state!.propertyStates[2] = { owner: bot2.id, level: 0, mortgaged: false };
+    state!.propertyStates[3] = { owner: bot2.id, level: 0, mortgaged: false };
+    state!.propertyStates[5] = { owner: bot2.id, level: 0, mortgaged: false };
+    // Give bot1 another property
+    state!.players[bot1.id].properties = [7];
+    state!.propertyStates[7] = { owner: bot1.id, level: 0, mortgaged: false };
+    await saveGameState(gameId, state!);
+
+    const trade: Partial<Trade> = {
+        gameId,
+        proposerId: bot1.id,
+        responderId: bot2.id,
+        offer: { properties: [7] },
+        request: { properties: [2] }, // Requesting a property from the monopoly
+    };
+
+    await proposeTrade(trade);
+    await botPlayer2.handleGameEvent({ type: 'TRADE_OFFER', trade }, state!);
+
+    const updatedState = await loadGameState(gameId);
+    expect(updatedState!.players[bot2.id].properties).toContain(2);
+    expect(updatedState!.players[bot1.id].properties).toContain(7);
+  });
+
+  test('bot rejects a trade with an unfair offer for a property with houses', async () => {
+    let state = await loadGameState(gameId);
+    state!.players[bot1.id].properties = [2];
+    state!.propertyStates[2] = { owner: bot1.id, level: 3, mortgaged: false }; // 3 houses
+    state!.players[bot2.id].properties = [5];
+    state!.propertyStates[5] = { owner: bot2.id, level: 0, mortgaged: false };
+    await saveGameState(gameId, state!);
+
+    const trade: Partial<Trade> = {
+        gameId,
+        proposerId: bot2.id,
+        responderId: bot1.id,
+        offer: { properties: [5] },
+        request: { properties: [2] }, // Requesting a property with 3 houses
+    };
+
+    await proposeTrade(trade);
+    await botPlayer1.handleGameEvent({ type: 'TRADE_OFFER', trade }, state!);
+
+    const updatedState = await loadGameState(gameId);
+    expect(updatedState!.players[bot1.id].properties).toContain(2);
+    expect(updatedState!.players[bot2.id].properties).toContain(5);
+  });
+
+  // test('bot rejects a trade with an unfair offer for a mortgaged property', async () => {
+  //   let state = await loadGameState(gameId);
+  //   state!.players[bot1.id].properties = [2];
+  //   state!.propertyStates[2] = { owner: bot1.id, level: 0, mortgaged: true }; // Mortgaged
+  //   state!.players[bot2.id].properties = [5];
+  //   state!.propertyStates[5] = { owner: bot2.id, level: 0, mortgaged: false };
+  //   await saveGameState(gameId, state!);
+
+  //   const trade: Partial<Trade> = {
+  //       gameId,
+  //       proposerId: bot2.id,
+  //       responderId: bot1.id,
+  //       offer: { properties: [5] },
+  //       request: { properties: [2] }, // Requesting a mortgaged property
+  //   };
+
+  //   await proposeTrade(trade);
+  //   await botPlayer1.handleGameEvent({ type: 'TRADE_OFFER', trade }, state!);
+
+  //   const updatedState = await loadGameState(gameId);
+  //   expect(updatedState!.players[bot1.id].properties).toContain(2);
+  //   expect(updatedState!.players[bot2.id].properties).toContain(5);
+  // });
+});

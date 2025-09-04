@@ -1,0 +1,142 @@
+import { Server } from 'socket.io';
+import inMemoryGameStates from '../__mocks__/in_game_memory';
+import inMemoryTrades from '../__mocks__/in_memory_trades';
+import { addBot, createGame, loadGameState, saveGameState, startGame } from '../gameManager';
+
+
+jest.setTimeout(800000);
+
+describe('Game Simulation', () => {
+  let gameId: string;
+  let io: Server;
+
+  beforeEach(async () => {
+        inMemoryGameStates.clear()
+    inMemoryTrades.clear()
+    io = new Server();
+
+    const game = await createGame({});
+    gameId = game.gameId;
+    await saveGameState(gameId,game)
+  });
+
+  test('should simulate a game with 4 bots and check for inconsistencies', async () => {
+    await addBot(gameId,io)
+    await addBot(gameId,io)
+    // await addBot(gameId,io)
+    // await addBot(gameId,io)
+    // await addBot(gameId,io)
+    // await addBot(gameId,io)
+    await addBot(gameId,io)
+    const {state:s} = await addBot(gameId,io)
+
+    await startGame(gameId, s,false,true);
+
+    let gameState = await loadGameState(gameId);
+    let turn = 0;
+
+  //  await redis.del(`events:${gameId}`)
+  //  await addToEvents(gameId,{"type":"event"})
+  //    console.log(await loadGameEvents(gameId))
+    await new Promise<void>((resolve) => {
+      const interval = setInterval(async () => {
+        gameState = await loadGameState(gameId);
+        // console.log(`Turn: ${gameState?.turn}, Phase: ${gameState?.phase}, Order: ${gameState?.order}`)
+            
+          // process.stdout.write(`${gameState?.order.length} ${gameState?.phase}`) 
+        if (gameState?.phase === 'game_over' || gameState?.order.length!<=1) {
+          clearInterval(interval);
+          resolve();
+        }
+      }, 3000);
+    });
+
+  //  const newState = gameState
+  //  newState!.eventLog = newState?.eventLog[newState?.eventLog.length-1];
+    console.log(gameState)
+
+      
+    expect(gameState).toBeDefined();
+    expect(gameState!.order.length).toBe(1);
+  });
+
+  // test('should simulate a game with specific debt scenarios and verify bankruptcy', async () => {
+  //   // Add 4 bots
+  //   await addBot(gameId, io);
+  //   await addBot(gameId, io);
+  //   await addBot(gameId, io);
+  //   const { state: s } = await addBot(gameId, io);
+
+  //   let gameState = await loadGameState(gameId); // Load the state after startGame
+  //   const players = Object.values(gameState!.players);
+
+  
+  //   // Now, manually set up properties and money for each bot
+  //   // Scenario 1: Bot 1 has low money and properties, should go bankrupt quickly
+  //   const bot1 = players[0];
+  //   bot1.money = 100; // Very low money
+  //   bot1.properties = [2, 3]; // Janakpur and Dharan (cheap properties)
+  //   gameState!.propertyStates[2] = { owner: bot1.id, level: 0, mortgaged: false };
+  //   gameState!.propertyStates[3] = { owner: bot1.id, level: 0, mortgaged: false };
+  //   // Ensure assets are updated
+  //   updatePlayerAssets(bot1, gameState!.propertyStates);
+
+  //   // Scenario 2: Bot 2 has some money, but also some debt, should try to avoid bankruptcy
+  //   const bot2 = players[1];
+  //   bot2.money = 5000;
+  //   bot2.properties = [12, 13]; // Museum and Patan (medium properties) 
+  //   gameState!.propertyStates[12] = { owner: bot2.id, level: 0, mortgaged: false };
+  //   gameState!.propertyStates[13] = { owner: bot2.id, level: 0, mortgaged: false };
+  //   bot2.debtAmount = 3000; // Debt to bank (or another player, for simplicity, let's assume bank)
+  //   // Ensure assets are updated
+  //   updatePlayerAssets(bot2, gameState!.propertyStates);
+
+  //   // Scenario 3: Bot 3 has enough money and properties, should not go bankrupt
+  //   const bot3 = players[2];
+  //   bot3.money = 15000;
+  //   bot3.properties = [17, 19, 20]; // Swayambhu, Basantapur, Lazimpat (expensive properties)
+  //   gameState!.propertyStates[17] = { owner: bot3.id, level: 0, mortgaged: false };
+  //   gameState!.propertyStates[19] = { owner: bot3.id, level: 0, mortgaged: false };
+  //   gameState!.propertyStates[20] = { owner: bot3.id, level: 0, mortgaged: false };
+  //   // Ensure assets are updated
+  //   updatePlayerAssets(bot3, gameState!.propertyStates);
+
+  //   // Bot 4: Default state (should also go bankrupt eventually if game progresses)
+  //   const bot4 = players[3];
+  //   await saveGameState(gameId, gameState!); // Save the modified game state
+
+  //   // Load state again to confirm save
+  //   gameState = await loadGameState(gameId);
+  
+  //   gameState =await startGame(gameId, gameState!, true, true); // Start the game, skipping initialization
+
+  //   // Load state after startGame to confirm it's not reset
+ 
+
+  //   let turns = 0;
+  //   const maxTurns = 50; // Run for a limited number of turns
+
+  //   await new Promise<void>((resolve) => {
+  //     const interval = setInterval(async () => {
+  //       gameState = await loadGameState(gameId);
+  //       turns++;
+
+  //       // Check if game is over or max turns reached
+  //       if (gameState?.phase === 'game_over' || gameState?.order.length! <= 1 || turns >= maxTurns) {
+  //         clearInterval(interval);
+  //         resolve();
+  //       }
+  //     }, 1000); // Check every 3 seconds
+  //   });
+
+  //   // Assertions
+  //   expect(gameState).toBeDefined();
+  //   // Expect at least one player to be bankrupt (bot1)
+  //   const bankruptPlayers = Object.values(gameState!.players).filter(p => p.status === 'bankrupt');
+  //   expect(bankruptPlayers.length).toBeGreaterThanOrEqual(1);
+  //   // Expect bot1 to be bankrupt
+  //   expect(gameState!.players[bot1.id].status).toBe('bankrupt');
+  //   // Expect bot3 not to be bankrupt
+  //   expect(gameState!.players[bot3.id].status).not.toBe('bankrupt');
+  // });
+});

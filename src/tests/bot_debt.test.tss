@@ -1,0 +1,102 @@
+
+import { Server } from 'socket.io';
+import inMemoryGameStates from '../__mocks__/in_game_memory';
+import { updatePlayerAssets } from '../gameActions';
+import { bots } from '../botMetadataManager';
+import { addBot, createGame, loadGameState, saveGameState } from '../gameState';
+import { GAME_SETTINGS, PlayerState } from '../types';
+
+jest.mock('uuid');
+jest.mock("../redis");
+jest.mock('../index', () => ({
+  io: {
+    to: jest.fn().mockReturnThis(),
+    emit: jest.fn(),
+  },
+}));
+
+jest.setTimeout(15000);
+
+describe('Bot Debt and Bankruptcy Logic', () => {
+    let gameId: string;
+    let io: Server;
+    let bot1: PlayerState;
+    let bot2: PlayerState;
+  
+
+    beforeEach(async () => {
+        jest.resetModules(); // Clear module cache
+        inMemoryGameStates.clear();
+        io = new Server();
+        const state = await createGame({});
+        gameId = state.gameId;
+        await addBot(gameId, io);
+        await addBot(gameId, io);
+        const updatedState = await loadGameState(gameId);
+        bot1 = Object.values(updatedState!.players)[0];
+        bot2 = Object.values(updatedState!.players)[1];
+      
+    });
+
+
+    test("bot 1 is in debt to bot2 & should get out of debt by selling stuff",async()=>{
+        let state = await loadGameState(gameId)
+        expect(state).toBeDefined()
+        
+        let house1 =40
+        let house2 =38
+        let house3 =2
+        let house4 =3
+        state!.players[bot1.id].properties = [house1, house2,house3,house4];
+
+    state!.propertyStates[house1] = { owner: bot1.id, level: 1, mortgaged: false };
+    state!.propertyStates[house2] = { owner: bot1.id, level: 1, mortgaged: false };
+    state!.propertyStates[house3] = { owner: bot1.id, level: 1, mortgaged: false };
+    state!.propertyStates[house4] = { owner: bot1.id, level: 1, mortgaged: false };
+    updatePlayerAssets(state!.players[bot1.id], state!.propertyStates); // Update assets after direct property assignment
+        // console.log(state!.players[bot1.id].assets)
+    updatePlayerAssets(state!.players[bot2.id], state!.propertyStates); // Update assets after direct property assignment
+
+
+
+            // console.log(totalHouseMoney,totalPropertyMoney)
+        const debt= 8000
+    // Bot1 is in debt to bot2
+    state!.players[bot1.id].money=0
+    state!.players[bot1.id].debtAmount = debt
+    state!.players[bot1.id].debtToPlayerId = bot2.id
+
+    await saveGameState(gameId,state!)
+
+    const initialBot1AssetsTotalValue = state!.players[bot1.id].assets.totalValue;
+ await bots.get(bot1.id)?.handleBankruptcy(state!.players[bot1.id],state!,debt)
+
+
+  state = await loadGameState(gameId)
+
+        
+
+//  console.log(state!.propertyStates)
+  console.log(state!.players)
+
+ expect(state!.players[bot1.id].debtAmount).toBeUndefined()
+    expect(state!.players[bot1.id].debtToPlayerId).toBeUndefined()
+ if(state!.players[bot1.id].status =="bankrupt"){
+    
+    expect(state!.players[bot1.id].assets.totalValue).toBe(0);
+
+      expect(state!.players[bot2.id].money).toBe(GAME_SETTINGS.initialPlayerMoney + 7800);
+ }
+ else{
+expect(state!.players[bot1.id].assets.totalValue).toBeLessThan(initialBot1AssetsTotalValue);
+ expect(state!.players[bot2.id].money).toBe(GAME_SETTINGS.initialPlayerMoney+debt);
+ }
+
+    })
+ 
+});
+
+
+  
+
+  

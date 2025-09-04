@@ -1,0 +1,80 @@
+import { Server } from 'socket.io';
+import inMemoryGameStates from '../__mocks__/in_game_memory';
+import inMemoryTrades from '../__mocks__/in_memory_trades';
+import { addBot, createGame, loadGameState, saveGameState, startGame } from '../gameManager';
+
+jest.setTimeout(200000*5);
+
+
+
+
+
+describe("Game Simulation Stress Test", () => {
+  let io: Server;
+
+  beforeAll(() => {
+
+    io = new Server();
+    inMemoryGameStates.clear()
+    inMemoryTrades.clear()
+  });
+
+  test("simulate game 50 times and track success rate", async () => {
+    const iterations = 10;
+    let successCount = 0;
+
+    for (let i = 0; i < iterations; i++) {
+      process.stdout.clearLine(0);
+      process.stdout.cursorTo(0);
+      process.stdout.write(`sim ${i + 1}/${iterations}`);
+    process.stdout.write("\n");
+      const result = await runSimulation(io);
+
+      if (result && result.phase === "game_over") {
+        successCount++;
+      }
+    }
+
+    process.stdout.write("\n");
+    const successRate = (successCount / iterations) * 100;
+
+    console.log(`✅ Success rate: ${successCount}/${iterations} (${successRate.toFixed(2)}%)`);
+
+    // optional assertion for minimum reliability
+    expect(successRate).toBeGreaterThan(90);
+  });
+});
+
+
+async function runSimulation(io: Server) {
+  inMemoryGameStates.clear();
+  inMemoryTrades.clear();
+
+  const game = await createGame({});
+  const gameId = game.gameId;
+  await saveGameState(gameId, game);
+
+  // Add 4 bots
+  await addBot(gameId, io);
+  await addBot(gameId, io);
+  await addBot(gameId, io);
+
+  const { state: s } = await addBot(gameId, io);
+
+  await startGame(gameId, s, false,true);
+
+  let gameState = await loadGameState(gameId);
+
+  // Wait until game_over
+  await new Promise<void>((resolve) => {
+    const interval = setInterval(async () => {
+      gameState = await loadGameState(gameId);
+      if (gameState?.phase === "game_over" || gameState?.order.length! <= 1) {
+        clearInterval(interval);
+        resolve();
+      }
+    }, 3000);
+  });
+
+  return gameState;
+}

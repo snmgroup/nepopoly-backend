@@ -1,0 +1,65 @@
+
+import { Server } from 'socket.io';
+import inMemoryGameStates from '../__mocks__/in_game_memory';
+import inMemoryTrades from '../__mocks__/in_memory_trades';
+import { BotPlayer } from '../botManager';
+import { addBot, createGame, loadGameState, saveGameState } from '../gameManager';
+import { BOARD, GameState } from '../types';
+
+jest.setTimeout(800000);
+
+describe('Bot Property Management', () => {
+  let gameId: string;
+  let io: Server;
+  let bot: BotPlayer;
+  let gameState: GameState;
+
+  beforeEach(async () => {
+    inMemoryGameStates.clear();
+    inMemoryTrades.clear();
+    io = new Server();
+
+    const game = await createGame({isSimulation:true});
+    gameId = game.gameId;
+    await saveGameState(gameId, game);
+
+    const { state: s, bot: newBot } = await addBot(gameId, io, 'bot1');
+    bot = newBot;
+    gameState = s;
+  });
+
+  test('should build houses on a monopoly if it has enough money', async () => {
+    // Give the bot the "EAST" group monopoly
+    const eastGroupProperties = BOARD.filter(p => p.group === 'EAST');
+    const botPlayer = gameState.players[bot.playerId];
+
+    botPlayer.money = 0
+    for (const prop of eastGroupProperties) {
+      botPlayer.properties.push(prop.id);
+      gameState.propertyStates[prop.id] = { owner: bot.playerId, level: 0, mortgaged: false };
+      botPlayer.money+= prop.houseCost!*2
+    }
+
+
+
+ 
+
+    await saveGameState(gameId, gameState);
+
+    // Trigger the bot's property management logic
+    await bot.manageProperties(gameState);
+
+    const updatedGameState = await loadGameState(gameId);
+    const updatedBotPlayer = updatedGameState!.players[bot.playerId];
+
+    let totalHousesBuilt = 0;
+    for (const prop of eastGroupProperties) {
+      totalHousesBuilt += updatedGameState!.propertyStates[prop.id]?.level || 0;
+    }
+
+    // The bot should build houses until it can't afford more.
+    // In this case, it should build 2 houses on each of the 3 properties.
+    expect(totalHousesBuilt).toBe(6);
+    expect(updatedBotPlayer.money).toBe(0);
+  });
+});
